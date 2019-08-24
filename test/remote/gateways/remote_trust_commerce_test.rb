@@ -5,6 +5,7 @@ class TrustCommerceTest < Test::Unit::TestCase
     @gateway = TrustCommerceGateway.new(fixtures(:trust_commerce))
 
     @credit_card = credit_card('4111111111111111')
+    @check = check({account_number: 55544433221, routing_number: 789456124})
 
     @amount = 100
 
@@ -41,9 +42,9 @@ class TrustCommerceTest < Test::Unit::TestCase
     assert response = @gateway.purchase(@amount, @credit_card, @options)
 
     assert_equal Response, response.class
-    assert_equal ["error",
-                  "offenders",
-                  "status"], response.params.keys.sort
+    assert_equal ['error',
+                  'offenders',
+                  'status'], response.params.keys.sort
 
     assert_match %r{A field was improperly formatted, such as non-digit characters in a number field}, response.message
 
@@ -53,6 +54,14 @@ class TrustCommerceTest < Test::Unit::TestCase
   def test_successful_purchase_with_avs
     assert response = @gateway.purchase(@amount, @credit_card, @options)
     assert_equal 'Y', response.avs_result['code']
+    assert_match %r{The transaction was successful}, response.message
+
+    assert_success response
+    assert !response.authorization.blank?
+  end
+
+  def test_successful_purchase_with_check
+    assert response = @gateway.purchase(@amount, @check, @options)
     assert_match %r{The transaction was successful}, response.message
 
     assert_success response
@@ -70,15 +79,27 @@ class TrustCommerceTest < Test::Unit::TestCase
 
   def test_purchase_with_avs_for_invalid_address
     assert response = @gateway.purchase(@amount, @credit_card, @options.update(:billing_address => @invalid_address))
-    assert_equal "N", response.params["avs"]
+    assert_equal 'N', response.params['avs']
     assert_match %r{The transaction was successful}, response.message
     assert_success response
+  end
+
+  # Requires enabling the setting: 'Allow voids to process or settle on processing node' in the Trust Commerce vault UI
+  def test_purchase_and_void
+    purchase = @gateway.purchase(@amount, @credit_card, @options)
+    assert_success purchase
+
+    void = @gateway.void(purchase.authorization)
+    assert_success void
+    assert_equal 'The transaction was successful', void.message
+    assert_equal 'accepted', void.params['status']
+    assert void.params['transid']
   end
 
   def test_successful_authorize_with_avs
     assert response = @gateway.authorize(@amount, @credit_card, :billing_address => @valid_address)
 
-    assert_equal "Y", response.avs_result["code"]
+    assert_equal 'Y', response.avs_result['code']
     assert_match %r{The transaction was successful}, response.message
 
     assert_success response
@@ -94,7 +115,7 @@ class TrustCommerceTest < Test::Unit::TestCase
 
   def test_authorization_with_avs_for_invalid_address
     assert response = @gateway.authorize(@amount, @credit_card, @options.update(:billing_address => @invalid_address))
-    assert_equal "N", response.params["avs"]
+    assert_equal 'N', response.params['avs']
     assert_match %r{The transaction was successful}, response.message
     assert_success response
   end
@@ -128,6 +149,15 @@ class TrustCommerceTest < Test::Unit::TestCase
     assert_success response
   end
 
+  def test_successful_check_refund
+    purchase = @gateway.purchase(@amount, @check, @options)
+
+    assert response = @gateway.refund(@amount, purchase.authorization)
+
+    assert_match %r{The transaction was successful}, response.message
+    assert_success response
+  end
+
   def test_store_failure
     assert response = @gateway.store(@credit_card)
 
@@ -156,7 +186,7 @@ class TrustCommerceTest < Test::Unit::TestCase
       @gateway.purchase(@amount, @credit_card,  @options)
     end
     clean_transcript = @gateway.scrub(transcript)
-    
+
     assert_scrubbed(@credit_card.number, clean_transcript)
     assert_scrubbed(@credit_card.verification_value.to_s, clean_transcript)
   end
